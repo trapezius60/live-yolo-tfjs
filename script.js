@@ -1,14 +1,14 @@
 // --------------------- Config ---------------------
 const MODEL_URL = './yolov8n_web_model/model.json';
 const COCO_CLASSES = [
- 'person','bicycle','car','motorcycle','airplane','bus','train','truck','boat','traffic light',
- 'fire hydrant','stop sign','parking meter','bench','bird','cat','dog','horse','sheep','cow',
- 'elephant','bear','zebra','giraffe','backpack','umbrella','handbag','tie','suitcase',
- 'frisbee','skis','snowboard','sports ball','kite','baseball bat','baseball glove','skateboard','surfboard','tennis racket',
- 'bottle','wine glass','cup','fork','knife','spoon','bowl','banana','apple','sandwich',
- 'orange','broccoli','carrot','hot dog','pizza','donut','cake','chair','couch','potted plant',
- 'bed','dining table','toilet','tv','laptop','mouse','remote','keyboard','cell phone',
- 'microwave','oven','toaster','sink','refrigerator','book','clock','vase','scissors','teddy bear','hair drier','toothbrush'
+  'person','bicycle','car','motorcycle','airplane','bus','train','truck','boat','traffic light',
+  'fire hydrant','stop sign','parking meter','bench','bird','cat','dog','horse','sheep','cow',
+  'elephant','bear','zebra','giraffe','backpack','umbrella','handbag','tie','suitcase',
+  'frisbee','skis','snowboard','sports ball','kite','baseball bat','baseball glove','skateboard','surfboard','tennis racket',
+  'bottle','wine glass','cup','fork','knife','spoon','bowl','banana','apple','sandwich',
+  'orange','broccoli','carrot','hot dog','pizza','donut','cake','chair','couch','potted plant',
+  'bed','dining table','toilet','tv','laptop','mouse','remote','keyboard','cell phone',
+  'microwave','oven','toaster','sink','refrigerator','book','clock','vase','scissors','teddy bear','hair drier','toothbrush'
 ];
 
 // --------------------- DOM ---------------------
@@ -23,11 +23,11 @@ thresh.addEventListener('input', () => {
   threshVal.textContent = Number(thresh.value).toFixed(2);
 });
 
-// --------------------- Webcam Setup ---------------------
+// --------------------- Webcam ---------------------
 async function setupCamera() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" } }, // back camera if available
+      video: { facingMode: { ideal: "environment" } },
       audio: false
     });
     webcam.srcObject = stream;
@@ -112,10 +112,23 @@ async function detectLoop() {
   try { output = await model.executeAsync(input); } 
   catch(e){ output = await model.execute(input); }
 
-  const data = output.arraySync()[0]; // [N,85]
+  // ---------- DEBUG ----------
+  console.log('Model output shape:', output.shape);
+
+  // Check if output is [1,N,85] or other
+  let data;
+  if (output.shape.length === 3 && output.shape[2] >= 5) {
+    data = output.arraySync()[0]; // shape [N,85]
+    console.log('First 5 predictions:', data.slice(0,5));
+  } else {
+    console.warn('Unexpected model output shape. Check your model export.');
+    tf.dispose([input, output]);
+    requestAnimationFrame(detectLoop);
+    return;
+  }
+
   const boxes = [], scoresArr = [], classesArr = [];
   const confThreshold = Number(thresh.value);
-
   const scaleX = canvas.width / 640;
   const scaleY = canvas.height / 640;
 
@@ -125,10 +138,7 @@ async function detectLoop() {
     const classIndex = classProbs.indexOf(maxClassScore);
     const finalScore = conf * maxClassScore;
 
-    if(finalScore < confThreshold) continue; // discard low confidence
-
-    // optional: only detect person
-    // if(classIndex !== 0) continue;
+    if(finalScore < confThreshold) continue;
 
     const ymin = (y - h/2) * scaleY;
     const xmin = (x - w/2) * scaleX;
