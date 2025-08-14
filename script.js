@@ -44,15 +44,16 @@ function drawDetections(boxes, scores, classes) {
 
   for (let i = 0; i < scores.length; i++) {
     const [ymin, xmin, ymax, xmax] = boxes[i];
-    const x = xmin * canvas.width;
-    const y = ymin * canvas.height;
-    const w = (xmax - xmin) * canvas.width;
-    const h = (ymax - ymin) * canvas.height;
+    const x = xmin;
+    const y = ymin;
+    const w = xmax - xmin;
+    const h = ymax - ymin;
 
     const label = (COCO_CLASSES[classes[i]] || `cls ${classes[i]}`) + ` ${(scores[i]*100).toFixed(1)}%`;
 
     ctx.strokeStyle = 'white';
     ctx.strokeRect(x, y, w, h);
+
     const pad = 4;
     const textW = ctx.measureText(label).width;
     const textH = 18;
@@ -74,7 +75,7 @@ function intersectionOverUnion(boxA, boxB) {
   return interArea / (boxAArea + boxBArea - interArea);
 }
 
-function nonMaxSuppression(boxes, scores, iouThreshold=0.5){
+function nonMaxSuppression(boxes, scores, iouThreshold=0.4){
   const selectedIndices = [];
   const sorted = scores.map((s,i)=>({score:s,i})).sort((a,b)=>b.score-a.score).map(o=>o.i);
 
@@ -111,25 +112,32 @@ async function detectLoop() {
   const boxes = [], scoresArr = [], classesArr = [];
   const confThreshold = Number(thresh.value);
 
+  const scaleX = canvas.width / 640;
+  const scaleY = canvas.height / 640;
+
   for(const row of data){
     const [x, y, w, h, conf, ...classProbs] = row;
     const maxClassScore = Math.max(...classProbs);
     const classIndex = classProbs.indexOf(maxClassScore);
     const finalScore = conf * maxClassScore;
 
-    if(finalScore > confThreshold){
-      // convert x,y,w,h -> ymin,xmin,ymax,xmax normalized
-      const ymin = (y - h/2)/640;
-      const xmin = (x - w/2)/640;
-      const ymax = (y + h/2)/640;
-      const xmax = (x + w/2)/640;
-      boxes.push([ymin,xmin,ymax,xmax]);
-      scoresArr.push(finalScore);
-      classesArr.push(classIndex);
-    }
+    if(finalScore < confThreshold) continue; // filter low confidence
+
+    // optional: only detect person (class 0)
+    // if(classIndex !== 0) continue;
+
+    // scale to canvas size
+    const ymin = (y - h/2) * scaleY;
+    const xmin = (x - w/2) * scaleX;
+    const ymax = (y + h/2) * scaleY;
+    const xmax = (x + w/2) * scaleX;
+
+    boxes.push([ymin,xmin,ymax,xmax]);
+    scoresArr.push(finalScore);
+    classesArr.push(classIndex);
   }
 
-  const selected = nonMaxSuppression(boxes, scoresArr, 0.5);
+  const selected = nonMaxSuppression(boxes, scoresArr, 0.4);
   drawDetections(
     selected.map(i=>boxes[i]),
     selected.map(i=>scoresArr[i]),
