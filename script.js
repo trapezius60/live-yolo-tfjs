@@ -31,7 +31,7 @@ thresh.addEventListener('input', () => {
   threshVal.textContent = Number(thresh.value).toFixed(2);
 });
 
-// Create a button for camera access (better for mobile)
+// Create a button for camera access
 function createCameraButton() {
   const button = document.createElement('button');
   button.textContent = 'Start Camera';
@@ -60,64 +60,22 @@ function createCameraButton() {
 async function startCamera() {
   statusEl.textContent = '🎥 Starting camera...';
   
-  // Stop any existing stream
   if (currentStream) {
-    currentStream.getTracks().forEach(track => {
-      track.stop();
-      console.log('Stopped track:', track.label);
-    });
+    currentStream.getTracks().forEach(track => track.stop());
     currentStream = null;
   }
 
-  // Reset video element
   webcam.srcObject = null;
   cameraReady = false;
 
-  console.log('🔍 Checking camera permissions...');
-  
-  // Check permissions first
-  try {
-    const permissions = await navigator.permissions.query({ name: 'camera' });
-    console.log('Camera permission status:', permissions.state);
-    
-    permissions.onchange = () => {
-      console.log('Permission changed to:', permissions.state);
-    };
-  } catch (e) {
-    console.log('Permission API not supported');
-  }
-
-  // List available devices
-  try {
-    console.log('📱 Getting media devices...');
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const videoDevices = devices.filter(device => device.kind === 'videoinput');
-    
-    console.log(`Found ${videoDevices.length} video devices:`);
-    videoDevices.forEach((device, index) => {
-      console.log(`  ${index + 1}. ${device.label || 'Unknown Camera'} (ID: ${device.deviceId.slice(0, 10)}...)`);
-    });
-
-    if (videoDevices.length === 0) {
-      statusEl.textContent = '❌ No cameras found';
-      return false;
-    }
-
-  } catch (error) {
-    console.error('Error enumerating devices:', error);
-    statusEl.textContent = '❌ Cannot access media devices';
-    return false;
-  }
-
-  // Try different camera configurations
   const configurations = [
     {
       name: 'Back camera (exact)',
       constraints: {
         video: { 
           facingMode: { exact: "environment" },
-          width: { ideal: 1280, max: 1920 },
-          height: { ideal: 720, max: 1080 }
+          width: { ideal: 1920, max: 1920 },
+          height: { ideal: 1080, max: 1080 }
         },
         audio: false
       }
@@ -141,33 +99,6 @@ async function startCamera() {
       }
     },
     {
-      name: 'Front camera',
-      constraints: {
-        video: { facingMode: "user" },
-        audio: false
-      }
-    },
-    {
-      name: 'Any camera (high res)',
-      constraints: {
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        },
-        audio: false
-      }
-    },
-    {
-      name: 'Any camera (medium res)',
-      constraints: {
-        video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 }
-        },
-        audio: false
-      }
-    },
-    {
       name: 'Basic camera',
       constraints: {
         video: true,
@@ -176,99 +107,48 @@ async function startCamera() {
     }
   ];
 
-  for (let i = 0; i < configurations.length; i++) {
-    const config = configurations[i];
+  for (const config of configurations) {
     console.log(`🔄 Trying: ${config.name}`);
     statusEl.textContent = `Trying: ${config.name}...`;
     
     try {
-      console.log('Constraints:', JSON.stringify(config.constraints, null, 2));
-      
       currentStream = await navigator.mediaDevices.getUserMedia(config.constraints);
       
       if (currentStream && currentStream.active) {
         const videoTracks = currentStream.getVideoTracks();
-        console.log(`✅ SUCCESS! Got ${videoTracks.length} video track(s)`);
         
         if (videoTracks.length > 0) {
           const track = videoTracks[0];
           const settings = track.getSettings();
-          const capabilities = track.getCapabilities();
           
-          console.log('📹 Video track details:');
-          console.log('  Label:', track.label);
-          console.log('  Settings:', settings);
-          console.log('  Capabilities:', capabilities);
+          console.log('📹 Camera settings:', settings);
           
-          // Set up video element
           webcam.srcObject = currentStream;
           webcam.muted = true;
           webcam.playsInline = true;
           webcam.autoplay = true;
           
-          // Wait for video to load
           const videoReady = await new Promise((resolve) => {
-            const timeout = setTimeout(() => {
-              console.log('⏰ Video load timeout');
-              resolve(false);
-            }, 15000); // 15 second timeout
+            const timeout = setTimeout(() => resolve(false), 10000);
             
-            const onLoadedData = () => {
+            const onReady = () => {
               clearTimeout(timeout);
-              console.log(`📺 Video loaded: ${webcam.videoWidth}x${webcam.videoHeight}`);
-              console.log('Video ready state:', webcam.readyState);
-              console.log('Video current time:', webcam.currentTime);
+              console.log(`📺 Video ready: ${webcam.videoWidth}x${webcam.videoHeight}`);
               resolve(true);
             };
             
-            const onError = (e) => {
-              clearTimeout(timeout);
-              console.error('Video error:', e);
-              resolve(false);
-            };
-
-            // Try multiple events
-            webcam.addEventListener('loadeddata', onLoadedData, { once: true });
-            webcam.addEventListener('loadedmetadata', onLoadedData, { once: true });
-            webcam.addEventListener('canplay', onLoadedData, { once: true });
-            webcam.addEventListener('error', onError, { once: true });
+            webcam.addEventListener('loadeddata', onReady, { once: true });
+            webcam.addEventListener('canplay', onReady, { once: true });
             
-            // Force play
-            webcam.play().then(() => {
-              console.log('📺 Video play() successful');
-              // Give it a moment to start
-              setTimeout(() => {
-                if (webcam.videoWidth > 0) {
-                  onLoadedData();
-                }
-              }, 1000);
-            }).catch(e => {
-              console.warn('Video play() failed:', e);
-            });
+            webcam.play().catch(console.warn);
           });
 
           if (videoReady && webcam.videoWidth > 0 && webcam.videoHeight > 0) {
-            // Set up canvas
-            canvas.width = webcam.videoWidth;
-            canvas.height = webcam.videoHeight;
-            
-            console.log(`🎯 Canvas set to: ${canvas.width}x${canvas.height}`);
-            
-            // Style canvas for mobile
-            const maxWidth = Math.min(window.innerWidth - 20, 800);
-            const aspectRatio = canvas.height / canvas.width;
-            canvas.style.width = `${maxWidth}px`;
-            canvas.style.height = `${maxWidth * aspectRatio}px`;
-            
+            setupCanvas();
             cameraReady = true;
             statusEl.textContent = `✅ Camera ready: ${config.name}`;
-            
-            // Test video drawing
             testVideoDrawing();
-            
             return true;
-          } else {
-            console.log('❌ Video not ready or invalid dimensions');
           }
         }
       }
@@ -277,7 +157,6 @@ async function startCamera() {
       console.log(`❌ ${config.name} failed:`, error.message);
     }
     
-    // Clean up failed attempt
     if (currentStream) {
       currentStream.getTracks().forEach(track => track.stop());
       currentStream = null;
@@ -288,31 +167,64 @@ async function startCamera() {
   return false;
 }
 
+function setupCanvas() {
+  // IMPORTANT: Canvas size should match video dimensions exactly
+  canvas.width = webcam.videoWidth;
+  canvas.height = webcam.videoHeight;
+  
+  console.log(`🎯 Canvas set to match video: ${canvas.width}x${canvas.height}`);
+  
+  // Style canvas for responsive display while maintaining aspect ratio
+  const maxWidth = Math.min(window.innerWidth - 20, 800);
+  const aspectRatio = canvas.height / canvas.width;
+  
+  canvas.style.width = `${maxWidth}px`;
+  canvas.style.height = `${maxWidth * aspectRatio}px`;
+  canvas.style.display = 'block';
+  canvas.style.margin = '0 auto';
+  
+  console.log(`📱 Canvas display styled: ${maxWidth}px x ${maxWidth * aspectRatio}px`);
+}
+
 function testVideoDrawing() {
   console.log('🧪 Testing video drawing...');
   
-  if (!cameraReady || webcam.videoWidth === 0) {
-    console.log('Video not ready for drawing test');
-    return;
-  }
-  
-  // Draw a few test frames
   let testCount = 0;
   const testInterval = setInterval(() => {
+    if (!cameraReady || webcam.videoWidth === 0) {
+      clearInterval(testInterval);
+      return;
+    }
+    
     try {
+      // Draw video frame
       ctx.drawImage(webcam, 0, 0, canvas.width, canvas.height);
       
       // Draw test overlay
-      ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
-      ctx.fillRect(10, 10, 200, 40);
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.9)';
+      ctx.fillRect(10, 10, 250, 60);
       ctx.fillStyle = 'black';
-      ctx.font = 'bold 16px Arial';
-      ctx.fillText(`Video Test ${testCount + 1}`, 15, 35);
+      ctx.font = 'bold 14px Arial';
+      ctx.fillText(`Video Test ${testCount + 1}`, 15, 30);
+      ctx.fillText(`Canvas: ${canvas.width}x${canvas.height}`, 15, 45);
+      ctx.fillText(`Video: ${webcam.videoWidth}x${webcam.videoHeight}`, 15, 60);
+      
+      // Draw center crosshair for reference
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      ctx.strokeStyle = 'red';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(centerX - 50, centerY);
+      ctx.lineTo(centerX + 50, centerY);
+      ctx.moveTo(centerX, centerY - 50);
+      ctx.lineTo(centerX, centerY + 50);
+      ctx.stroke();
       
       console.log(`✅ Video frame ${testCount + 1} drawn successfully`);
       testCount++;
       
-      if (testCount >= 3) {
+      if (testCount >= 5) {
         clearInterval(testInterval);
         console.log('🎉 Video drawing test completed successfully!');
       }
@@ -326,12 +238,9 @@ function testVideoDrawing() {
 
 // --------------------- Drawing Functions ---------------------
 function drawDetections(boxes, scores, classes) {
-  // Only proceed if camera is ready
   if (!cameraReady || webcam.videoWidth === 0) {
-    // Draw black canvas with message
     ctx.fillStyle = 'black';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
     ctx.fillStyle = 'white';
     ctx.font = 'bold 20px Arial';
     ctx.textAlign = 'center';
@@ -340,90 +249,117 @@ function drawDetections(boxes, scores, classes) {
     return;
   }
 
-  // Draw video frame
-  try {
-    ctx.drawImage(webcam, 0, 0, canvas.width, canvas.height);
-  } catch (error) {
-    console.error('Error drawing video frame:', error);
-    return;
-  }
+  // Draw video frame first
+  ctx.drawImage(webcam, 0, 0, canvas.width, canvas.height);
   
-  // Draw detection info
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-  ctx.fillRect(10, 10, 350, 50);
+  // Draw debug info
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+  ctx.fillRect(10, 10, 320, 80);
   ctx.fillStyle = 'white';
   ctx.font = 'bold 12px Arial';
-  ctx.fillText(`Objects detected: ${boxes.length}`, 15, 25);
-  ctx.fillText(`Canvas: ${canvas.width}x${canvas.height}`, 15, 40);
-  ctx.fillText(`Video: ${webcam.videoWidth}x${webcam.videoHeight}`, 15, 55);
+  ctx.fillText(`Detections: ${boxes.length}`, 15, 25);
+  ctx.fillText(`Canvas: ${canvas.width} x ${canvas.height}`, 15, 40);
+  ctx.fillText(`Video: ${webcam.videoWidth} x ${webcam.videoHeight}`, 15, 55);
+  ctx.fillText(`Threshold: ${thresh.value}`, 15, 70);
+  ctx.fillText(`Camera: ${cameraReady ? 'Ready' : 'Not Ready'}`, 15, 85);
+  
+  // Draw center reference point
+  const centerX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+  ctx.fillStyle = 'yellow';
+  ctx.fillRect(centerX - 2, centerY - 2, 4, 4);
+  ctx.font = 'bold 12px Arial';
+  ctx.fillStyle = 'yellow';
+  ctx.fillText(`Center: ${centerX.toFixed(0)}, ${centerY.toFixed(0)}`, centerX + 10, centerY - 10);
   
   if (boxes.length === 0) return;
 
-  // Calculate actual display scaling
-  const canvasRect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / canvasRect.width;
-  const scaleY = canvas.height / canvasRect.height;
-  
-  console.log('Canvas actual size:', canvas.width, 'x', canvas.height);
-  console.log('Canvas display size:', canvasRect.width, 'x', canvasRect.height);
-  console.log('Display scaling factors:', scaleX, scaleY);
-
-  // Draw detections with bright colors
+  // Draw each detection
   for (let i = 0; i < boxes.length; i++) {
     const [ymin, xmin, ymax, xmax] = boxes[i];
     
-    console.log(`Detection ${i} original coords:`, { ymin, xmin, ymax, xmax });
+    console.log(`Drawing detection ${i}:`, {
+      coords: [ymin, xmin, ymax, xmax],
+      class: COCO_CLASSES[classes[i]],
+      confidence: (scores[i] * 100).toFixed(1) + '%'
+    });
     
-    // Use coordinates directly (they should already be scaled to canvas size)
+    // Ensure coordinates are within canvas
     const x = Math.max(0, Math.min(xmin, canvas.width - 1));
     const y = Math.max(0, Math.min(ymin, canvas.height - 1));
     const w = Math.max(1, Math.min(xmax - x, canvas.width - x));
     const h = Math.max(1, Math.min(ymax - y, canvas.height - y));
-    
-    console.log(`Detection ${i} final coords:`, { x, y, w, h });
 
-    const className = COCO_CLASSES[classes[i]] || `Class_${classes[i]}`;
+    const className = COCO_CLASSES[classes[i]] || `Unknown_${classes[i]}`;
     const confidence = Math.round(scores[i] * 100);
     const label = `${className} ${confidence}%`;
 
-    const colors = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF', '#FFA500', '#FF69B4'];
+    // Use bright, distinct colors
+    const colors = [
+      '#FF0000', '#00FF00', '#0000FF', '#FFFF00', 
+      '#FF00FF', '#00FFFF', '#FFA500', '#FF69B4',
+      '#32CD32', '#FF4500', '#DA70D6', '#40E0D0'
+    ];
     const color = colors[classes[i] % colors.length];
 
-    // Draw thick bounding box
+    // Draw very thick bounding box
     ctx.strokeStyle = color;
-    ctx.lineWidth = 5;
+    ctx.lineWidth = 6;
     ctx.strokeRect(x, y, w, h);
     
-    // Draw corner markers for better visibility
-    const markerSize = 20;
+    // Draw filled corner markers
+    const markerSize = 25;
     ctx.fillStyle = color;
-    // Top-left corner
-    ctx.fillRect(x, y, markerSize, 3);
-    ctx.fillRect(x, y, 3, markerSize);
-    // Top-right corner
-    ctx.fillRect(x + w - markerSize, y, markerSize, 3);
-    ctx.fillRect(x + w - 3, y, 3, markerSize);
-    // Bottom-left corner
-    ctx.fillRect(x, y + h - 3, markerSize, 3);
-    ctx.fillRect(x, y + h - markerSize, 3, markerSize);
-    // Bottom-right corner
-    ctx.fillRect(x + w - markerSize, y + h - 3, markerSize, 3);
-    ctx.fillRect(x + w - 3, y + h - markerSize, 3, markerSize);
+    
+    // Top-left
+    ctx.fillRect(x, y, markerSize, 4);
+    ctx.fillRect(x, y, 4, markerSize);
+    
+    // Top-right
+    ctx.fillRect(x + w - markerSize, y, markerSize, 4);
+    ctx.fillRect(x + w - 4, y, 4, markerSize);
+    
+    // Bottom-left
+    ctx.fillRect(x, y + h - 4, markerSize, 4);
+    ctx.fillRect(x, y + h - markerSize, 4, markerSize);
+    
+    // Bottom-right
+    ctx.fillRect(x + w - markerSize, y + h - 4, markerSize, 4);
+    ctx.fillRect(x + w - 4, y + h - markerSize, 4, markerSize);
+
+    // Draw center dot
+    const boxCenterX = x + w / 2;
+    const boxCenterY = y + h / 2;
+    ctx.fillStyle = color;
+    ctx.fillRect(boxCenterX - 3, boxCenterY - 3, 6, 6);
+
+    // Label with background
+    ctx.font = 'bold 16px Arial';
+    const textMetrics = ctx.measureText(label);
+    const textWidth = textMetrics.width;
+    const padding = 8;
+    const labelHeight = 28;
+
+    // Position label above box if possible, otherwise below
+    let labelY;
+    if (y > labelHeight + 10) {
+      labelY = y - 4;
+    } else {
+      labelY = y + h + labelHeight;
+    }
 
     // Label background
-    ctx.font = 'bold 16px Arial';
-    const textWidth = ctx.measureText(label).width;
-    const padding = 6;
-    const labelHeight = 24;
-
-    // Position label above box, or below if too close to top
-    const labelY = y > labelHeight + 10 ? y - labelHeight : y + h + labelHeight;
-
     ctx.fillStyle = color;
     ctx.fillRect(x, labelY - labelHeight + 4, textWidth + padding * 2, labelHeight);
     
+    // Label text
     ctx.fillStyle = 'white';
-    ctx.fillText(label, x + padding, labelY - 4);
+    ctx.fillText(label, x + padding, labelY - 8);
+    
+    // Draw coordinate text for debugging
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 10px Arial';
+    ctx.fillText(`(${x.toFixed(0)},${y.toFixed(0)})`, x, y - 8);
   }
 }
 
@@ -440,6 +376,7 @@ function processModelOutput(output) {
   } else if (output.shape.length === 2) {
     predictions = output.arraySync();
   } else {
+    console.warn('Unexpected output shape:', output.shape);
     return { boxes: [], scores: [], classes: [] };
   }
 
@@ -448,19 +385,25 @@ function processModelOutput(output) {
   const classes = [];
   const confThreshold = Number(thresh.value);
   
-  // Scale coordinates from 640x640 model input to actual canvas size
+  console.log(`🧠 Processing ${predictions.length} predictions`);
+  console.log(`Canvas dimensions: ${canvas.width} x ${canvas.height}`);
+  
+  // CRITICAL: Scale from model's 640x640 input to actual canvas size
   const scaleX = canvas.width / 640;
   const scaleY = canvas.height / 640;
   
-  console.log(`Model output scaling: ${scaleX.toFixed(2)}x, ${scaleY.toFixed(2)}y (Canvas: ${canvas.width}x${canvas.height})`);
+  console.log(`📐 Scaling factors: X=${scaleX.toFixed(3)}, Y=${scaleY.toFixed(3)}`);
 
-  let detectionCount = 0;
+  let validDetections = 0;
   
-  for (const pred of predictions) {
+  for (let i = 0; i < predictions.length; i++) {
+    const pred = predictions[i];
+    
     if (!pred || pred.length < 85) continue;
     
     const [centerX, centerY, width, height, objectness, ...classScores] = pred;
     
+    // Find best class
     let maxScore = -1;
     let bestClass = -1;
     
@@ -474,32 +417,80 @@ function processModelOutput(output) {
     const finalConfidence = objectness * maxScore;
     
     if (finalConfidence >= confThreshold) {
-      // Convert from center format to corner format and scale to canvas
+      // Convert from center format (model output) to corner format
+      // Model outputs are in 0-640 coordinate space
       const x1 = (centerX - width / 2) * scaleX;
       const y1 = (centerY - height / 2) * scaleY;
       const x2 = (centerX + width / 2) * scaleX;
       const y2 = (centerY + height / 2) * scaleY;
       
-      // Clamp coordinates to canvas bounds
+      // Clamp to canvas bounds
       const clampedX1 = Math.max(0, Math.min(x1, canvas.width));
       const clampedY1 = Math.max(0, Math.min(y1, canvas.height));
-      const clampedX2 = Math.max(clampedX1, Math.min(x2, canvas.width));
-      const clampedY2 = Math.max(clampedY1, Math.min(y2, canvas.height));
+      const clampedX2 = Math.max(clampedX1 + 1, Math.min(x2, canvas.width));
+      const clampedY2 = Math.max(clampedY1 + 1, Math.min(y2, canvas.height));
       
-      console.log(`Detection ${detectionCount}: ${COCO_CLASSES[bestClass]} (${(finalConfidence*100).toFixed(1)}%)`);
-      console.log(`  Model coords: center=(${centerX.toFixed(1)}, ${centerY.toFixed(1)}), size=(${width.toFixed(1)}, ${height.toFixed(1)})`);
-      console.log(`  Canvas coords: (${clampedX1.toFixed(1)}, ${clampedY1.toFixed(1)}) to (${clampedX2.toFixed(1)}, ${clampedY2.toFixed(1)})`);
+      console.log(`✅ Detection ${validDetections}: ${COCO_CLASSES[bestClass]} (${(finalConfidence*100).toFixed(1)}%)`);
+      console.log(`   Raw model: center=(${centerX.toFixed(1)}, ${centerY.toFixed(1)}), size=(${width.toFixed(1)} x ${height.toFixed(1)})`);
+      console.log(`   Scaled canvas: (${clampedX1.toFixed(1)}, ${clampedY1.toFixed(1)}) to (${clampedX2.toFixed(1)}, ${clampedY2.toFixed(1)})`);
+      console.log(`   Box size: ${(clampedX2-clampedX1).toFixed(1)} x ${(clampedY2-clampedY1).toFixed(1)}`);
       
       boxes.push([clampedY1, clampedX1, clampedY2, clampedX2]);
       scores.push(finalConfidence);
       classes.push(bestClass);
-      detectionCount++;
+      validDetections++;
     }
   }
   
-  console.log(`Total detections above threshold: ${detectionCount}`);
+  console.log(`📊 Found ${validDetections} valid detections`);
   
   return { boxes, scores, classes };
+}
+
+// --------------------- Simple NMS ---------------------
+function nonMaxSuppression(boxes, scores, iouThreshold = 0.4) {
+  if (boxes.length === 0) return [];
+  
+  const indices = scores.map((score, index) => ({ score, index }))
+                         .sort((a, b) => b.score - a.score)
+                         .map(item => item.index);
+  
+  const selected = [];
+  
+  while (indices.length > 0) {
+    const current = indices.shift();
+    selected.push(current);
+    
+    const remaining = [];
+    for (const idx of indices) {
+      const iou = calculateIoU(boxes[current], boxes[idx]);
+      if (iou <= iouThreshold) {
+        remaining.push(idx);
+      }
+    }
+    indices.length = 0;
+    indices.push(...remaining);
+  }
+  
+  return selected;
+}
+
+function calculateIoU(boxA, boxB) {
+  const [y1A, x1A, y2A, x2A] = boxA;
+  const [y1B, x1B, y2B, x2B] = boxB;
+  
+  const intersectX1 = Math.max(x1A, x1B);
+  const intersectY1 = Math.max(y1A, y1B);
+  const intersectX2 = Math.min(x2A, x2B);
+  const intersectY2 = Math.min(y2A, y2B);
+  
+  const intersectArea = Math.max(0, intersectX2 - intersectX1) * 
+                       Math.max(0, intersectY2 - intersectY1);
+  
+  const boxAArea = (x2A - x1A) * (y2A - y1A);
+  const boxBArea = (x2B - x1B) * (y2B - y1B);
+  
+  return intersectArea / (boxAArea + boxBArea - intersectArea + 1e-8);
 }
 
 // --------------------- Detection Loop ---------------------
@@ -510,15 +501,16 @@ async function detectLoop() {
   }
 
   try {
-    // Only run detection if camera is ready
     if (cameraReady && webcam.videoWidth > 0) {
+      // Create input tensor - resize video to 640x640 for model
       const input = tf.tidy(() => {
         return tf.browser.fromPixels(webcam)
-          .resizeBilinear([640, 640])
+          .resizeBilinear([640, 640])  // Model expects 640x640
           .div(255.0)
           .expandDims(0);
       });
 
+      // Run inference
       let output;
       try {
         output = await model.executeAsync(input);
@@ -526,9 +518,20 @@ async function detectLoop() {
         output = model.execute(input);
       }
 
+      // Process results
       const { boxes, scores, classes } = processModelOutput(output);
-      drawDetections(boxes, scores, classes);
+      
+      // Apply NMS
+      const selectedIndices = nonMaxSuppression(boxes, scores, 0.4);
+      
+      const finalBoxes = selectedIndices.map(i => boxes[i]);
+      const finalScores = selectedIndices.map(i => scores[i]);
+      const finalClasses = selectedIndices.map(i => classes[i]);
 
+      // Draw results
+      drawDetections(finalBoxes, finalScores, finalClasses);
+
+      // Cleanup
       input.dispose();
       if (Array.isArray(output)) {
         output.forEach(t => t.dispose());
@@ -536,7 +539,6 @@ async function detectLoop() {
         output.dispose();
       }
     } else {
-      // Just draw "camera not ready" message
       drawDetections([], [], []);
     }
 
@@ -553,7 +555,6 @@ async function initializeApp() {
     console.log('🚀 Initializing app...');
     statusEl.textContent = 'Initializing...';
     
-    // Check TensorFlow
     if (typeof tf === 'undefined') {
       statusEl.textContent = 'TensorFlow.js not loaded';
       return;
@@ -561,13 +562,12 @@ async function initializeApp() {
     
     console.log('✅ TensorFlow.js version:', tf.version.tfjs);
 
-    // Load model first (without camera)
     statusEl.textContent = 'Loading AI model...';
     try {
       model = await tf.loadGraphModel(MODEL_URL);
       console.log('✅ Model loaded successfully');
       
-      // Model warmup
+      // Warmup
       const dummyInput = tf.zeros([1, 640, 640, 3]);
       const warmupOutput = await model.executeAsync(dummyInput);
       dummyInput.dispose();
@@ -584,11 +584,11 @@ async function initializeApp() {
       return;
     }
 
-    // Set up canvas with default size
+    // Set default canvas size
     canvas.width = 640;
     canvas.height = 480;
     
-    // Start detection loop (will show "camera not ready" until camera works)
+    // Start detection loop
     isDetecting = true;
     detectLoop();
     
