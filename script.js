@@ -24,187 +24,340 @@ let model;
 let currentStream;
 let animationId;
 let isDetecting = false;
-
-// --------------------- Mobile Detection ---------------------
-function isMobile() {
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-}
+let cameraReady = false;
 
 // --------------------- Event Listeners ---------------------
 thresh.addEventListener('input', () => {
   threshVal.textContent = Number(thresh.value).toFixed(2);
 });
 
-// Add click handler for iOS - sometimes requires user interaction
-document.addEventListener('click', async () => {
-  if (!currentStream && webcam.srcObject === null) {
-    console.log('User clicked - attempting camera access');
-    await setupCamera();
-  }
-}, { once: true });
+// Create a button for camera access (better for mobile)
+function createCameraButton() {
+  const button = document.createElement('button');
+  button.textContent = 'Start Camera';
+  button.style.cssText = `
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    padding: 20px 40px;
+    font-size: 18px;
+    background: #007bff;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    z-index: 1000;
+  `;
+  button.onclick = async () => {
+    await startCamera();
+    button.remove();
+  };
+  document.body.appendChild(button);
+}
 
 // --------------------- Camera Functions ---------------------
-async function setupCamera() {
-  statusEl.textContent = 'Requesting camera access...';
+async function startCamera() {
+  statusEl.textContent = '🎥 Starting camera...';
   
   // Stop any existing stream
   if (currentStream) {
-    currentStream.getTracks().forEach(track => track.stop());
+    currentStream.getTracks().forEach(track => {
+      track.stop();
+      console.log('Stopped track:', track.label);
+    });
     currentStream = null;
   }
 
-  const mobile = isMobile();
-  console.log('Device is mobile:', mobile);
+  // Reset video element
+  webcam.srcObject = null;
+  cameraReady = false;
 
-  // Mobile-optimized constraints
-  const mobileConstraints = {
-    video: {
-      facingMode: { exact: "environment" }, // Force back camera
-      width: { ideal: 1280, max: 1920 },
-      height: { ideal: 720, max: 1080 }
-    },
-    audio: false
-  };
+  console.log('🔍 Checking camera permissions...');
+  
+  // Check permissions first
+  try {
+    const permissions = await navigator.permissions.query({ name: 'camera' });
+    console.log('Camera permission status:', permissions.state);
+    
+    permissions.onchange = () => {
+      console.log('Permission changed to:', permissions.state);
+    };
+  } catch (e) {
+    console.log('Permission API not supported');
+  }
 
-  const fallbackConstraints = [
-    // Try back camera with exact facingMode
+  // List available devices
+  try {
+    console.log('📱 Getting media devices...');
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoDevices = devices.filter(device => device.kind === 'videoinput');
+    
+    console.log(`Found ${videoDevices.length} video devices:`);
+    videoDevices.forEach((device, index) => {
+      console.log(`  ${index + 1}. ${device.label || 'Unknown Camera'} (ID: ${device.deviceId.slice(0, 10)}...)`);
+    });
+
+    if (videoDevices.length === 0) {
+      statusEl.textContent = '❌ No cameras found';
+      return false;
+    }
+
+  } catch (error) {
+    console.error('Error enumerating devices:', error);
+    statusEl.textContent = '❌ Cannot access media devices';
+    return false;
+  }
+
+  // Try different camera configurations
+  const configurations = [
     {
-      video: { facingMode: { exact: "environment" } },
-      audio: false
+      name: 'Back camera (exact)',
+      constraints: {
+        video: { 
+          facingMode: { exact: "environment" },
+          width: { ideal: 1280, max: 1920 },
+          height: { ideal: 720, max: 1080 }
+        },
+        audio: false
+      }
     },
-    // Try back camera with ideal facingMode
     {
-      video: { facingMode: { ideal: "environment" } },
-      audio: false
+      name: 'Back camera (ideal)',
+      constraints: {
+        video: { 
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      }
     },
-    // Try front camera as fallback
     {
-      video: { facingMode: "user" },
-      audio: false
+      name: 'Any back camera',
+      constraints: {
+        video: { facingMode: "environment" },
+        audio: false
+      }
     },
-    // Basic video request
     {
-      video: true,
-      audio: false
+      name: 'Front camera',
+      constraints: {
+        video: { facingMode: "user" },
+        audio: false
+      }
     },
-    // Very basic request with lower resolution
     {
-      video: {
-        width: { ideal: 640 },
-        height: { ideal: 480 }
-      },
-      audio: false
+      name: 'Any camera (high res)',
+      constraints: {
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      }
+    },
+    {
+      name: 'Any camera (medium res)',
+      constraints: {
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 }
+        },
+        audio: false
+      }
+    },
+    {
+      name: 'Basic camera',
+      constraints: {
+        video: true,
+        audio: false
+      }
     }
   ];
 
-  // Add mobile constraints to the beginning
-  if (mobile) {
-    fallbackConstraints.unshift(mobileConstraints);
-  }
-
-  for (let i = 0; i < fallbackConstraints.length; i++) {
-    const constraints = fallbackConstraints[i];
-    console.log(`Trying camera constraint ${i + 1}:`, constraints);
-    statusEl.textContent = `Trying camera option ${i + 1}...`;
-
+  for (let i = 0; i < configurations.length; i++) {
+    const config = configurations[i];
+    console.log(`🔄 Trying: ${config.name}`);
+    statusEl.textContent = `Trying: ${config.name}...`;
+    
     try {
-      currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+      console.log('Constraints:', JSON.stringify(config.constraints, null, 2));
       
-      if (currentStream && currentStream.getVideoTracks().length > 0) {
-        const videoTrack = currentStream.getVideoTracks()[0];
-        const settings = videoTrack.getSettings();
-        console.log('Camera settings:', settings);
-        console.log('Camera facing mode:', settings.facingMode);
+      currentStream = await navigator.mediaDevices.getUserMedia(config.constraints);
+      
+      if (currentStream && currentStream.active) {
+        const videoTracks = currentStream.getVideoTracks();
+        console.log(`✅ SUCCESS! Got ${videoTracks.length} video track(s)`);
         
-        webcam.srcObject = currentStream;
-        
-        // Wait for video to be ready
-        await new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            reject(new Error('Video load timeout'));
-          }, 10000);
+        if (videoTracks.length > 0) {
+          const track = videoTracks[0];
+          const settings = track.getSettings();
+          const capabilities = track.getCapabilities();
           
-          webcam.addEventListener('loadeddata', () => {
-            clearTimeout(timeout);
-            console.log(`Video ready: ${webcam.videoWidth}x${webcam.videoHeight}`);
-            resolve();
-          }, { once: true });
+          console.log('📹 Video track details:');
+          console.log('  Label:', track.label);
+          console.log('  Settings:', settings);
+          console.log('  Capabilities:', capabilities);
           
-          webcam.addEventListener('error', (e) => {
-            clearTimeout(timeout);
-            reject(e);
-          }, { once: true });
+          // Set up video element
+          webcam.srcObject = currentStream;
+          webcam.muted = true;
+          webcam.playsInline = true;
+          webcam.autoplay = true;
           
-          // Force play on mobile
-          webcam.play().catch(console.warn);
-        });
+          // Wait for video to load
+          const videoReady = await new Promise((resolve) => {
+            const timeout = setTimeout(() => {
+              console.log('⏰ Video load timeout');
+              resolve(false);
+            }, 15000); // 15 second timeout
+            
+            const onLoadedData = () => {
+              clearTimeout(timeout);
+              console.log(`📺 Video loaded: ${webcam.videoWidth}x${webcam.videoHeight}`);
+              console.log('Video ready state:', webcam.readyState);
+              console.log('Video current time:', webcam.currentTime);
+              resolve(true);
+            };
+            
+            const onError = (e) => {
+              clearTimeout(timeout);
+              console.error('Video error:', e);
+              resolve(false);
+            };
 
-        // Setup canvas
-        canvas.width = webcam.videoWidth;
-        canvas.height = webcam.videoHeight;
-        
-        // Make canvas responsive on mobile
-        const maxWidth = Math.min(window.innerWidth - 20, 800);
-        const aspectRatio = canvas.height / canvas.width;
-        canvas.style.width = `${maxWidth}px`;
-        canvas.style.height = `${maxWidth * aspectRatio}px`;
-        
-        statusEl.textContent = `Camera active: ${settings.facingMode || 'unknown'} facing`;
-        
-        // Test drawing video frame
-        drawVideoFrame();
-        
-        return true;
+            // Try multiple events
+            webcam.addEventListener('loadeddata', onLoadedData, { once: true });
+            webcam.addEventListener('loadedmetadata', onLoadedData, { once: true });
+            webcam.addEventListener('canplay', onLoadedData, { once: true });
+            webcam.addEventListener('error', onError, { once: true });
+            
+            // Force play
+            webcam.play().then(() => {
+              console.log('📺 Video play() successful');
+              // Give it a moment to start
+              setTimeout(() => {
+                if (webcam.videoWidth > 0) {
+                  onLoadedData();
+                }
+              }, 1000);
+            }).catch(e => {
+              console.warn('Video play() failed:', e);
+            });
+          });
+
+          if (videoReady && webcam.videoWidth > 0 && webcam.videoHeight > 0) {
+            // Set up canvas
+            canvas.width = webcam.videoWidth;
+            canvas.height = webcam.videoHeight;
+            
+            console.log(`🎯 Canvas set to: ${canvas.width}x${canvas.height}`);
+            
+            // Style canvas for mobile
+            const maxWidth = Math.min(window.innerWidth - 20, 800);
+            const aspectRatio = canvas.height / canvas.width;
+            canvas.style.width = `${maxWidth}px`;
+            canvas.style.height = `${maxWidth * aspectRatio}px`;
+            
+            cameraReady = true;
+            statusEl.textContent = `✅ Camera ready: ${config.name}`;
+            
+            // Test video drawing
+            testVideoDrawing();
+            
+            return true;
+          } else {
+            console.log('❌ Video not ready or invalid dimensions');
+          }
+        }
       }
       
     } catch (error) {
-      console.log(`Camera constraint ${i + 1} failed:`, error.message);
-      if (currentStream) {
-        currentStream.getTracks().forEach(track => track.stop());
-        currentStream = null;
-      }
+      console.log(`❌ ${config.name} failed:`, error.message);
+    }
+    
+    // Clean up failed attempt
+    if (currentStream) {
+      currentStream.getTracks().forEach(track => track.stop());
+      currentStream = null;
     }
   }
 
-  statusEl.textContent = 'Camera access failed. Please check permissions.';
+  statusEl.textContent = '❌ All camera attempts failed';
   return false;
 }
 
-function drawVideoFrame() {
-  if (webcam.videoWidth > 0 && webcam.videoHeight > 0) {
-    ctx.drawImage(webcam, 0, 0, canvas.width, canvas.height);
-    
-    // Draw status overlay
-    ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
-    ctx.fillRect(10, 10, 200, 40);
-    ctx.fillStyle = 'black';
-    ctx.font = 'bold 16px Arial';
-    ctx.fillText('Camera Active!', 15, 30);
-    
-    console.log('Video frame drawn successfully');
-  } else {
-    console.log('Video not ready yet');
-    setTimeout(drawVideoFrame, 100);
+function testVideoDrawing() {
+  console.log('🧪 Testing video drawing...');
+  
+  if (!cameraReady || webcam.videoWidth === 0) {
+    console.log('Video not ready for drawing test');
+    return;
   }
+  
+  // Draw a few test frames
+  let testCount = 0;
+  const testInterval = setInterval(() => {
+    try {
+      ctx.drawImage(webcam, 0, 0, canvas.width, canvas.height);
+      
+      // Draw test overlay
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
+      ctx.fillRect(10, 10, 200, 40);
+      ctx.fillStyle = 'black';
+      ctx.font = 'bold 16px Arial';
+      ctx.fillText(`Video Test ${testCount + 1}`, 15, 35);
+      
+      console.log(`✅ Video frame ${testCount + 1} drawn successfully`);
+      testCount++;
+      
+      if (testCount >= 3) {
+        clearInterval(testInterval);
+        console.log('🎉 Video drawing test completed successfully!');
+      }
+      
+    } catch (error) {
+      console.error('Video drawing test failed:', error);
+      clearInterval(testInterval);
+    }
+  }, 1000);
 }
 
 // --------------------- Drawing Functions ---------------------
 function drawDetections(boxes, scores, classes) {
-  // Always draw the video frame first
-  if (webcam.videoWidth > 0) {
+  // Only proceed if camera is ready
+  if (!cameraReady || webcam.videoWidth === 0) {
+    // Draw black canvas with message
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 20px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Camera Not Ready', canvas.width / 2, canvas.height / 2);
+    ctx.textAlign = 'left';
+    return;
+  }
+
+  // Draw video frame
+  try {
     ctx.drawImage(webcam, 0, 0, canvas.width, canvas.height);
+  } catch (error) {
+    console.error('Error drawing video frame:', error);
+    return;
   }
   
   // Draw detection info
   ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-  ctx.fillRect(10, 10, 250, 30);
+  ctx.fillRect(10, 10, 300, 30);
   ctx.fillStyle = 'white';
   ctx.font = 'bold 14px Arial';
-  ctx.fillText(`Detections: ${boxes.length} | FPS: ${getFPS()}`, 15, 28);
+  ctx.fillText(`Objects detected: ${boxes.length} | Camera: ${cameraReady ? 'Ready' : 'Not Ready'}`, 15, 28);
   
   if (boxes.length === 0) return;
 
-  // Draw each detection with bright colors
+  // Draw detections with bright colors
   for (let i = 0; i < boxes.length; i++) {
     const [ymin, xmin, ymax, xmax] = boxes[i];
     
@@ -213,25 +366,21 @@ function drawDetections(boxes, scores, classes) {
     const w = Math.min(canvas.width - x, xmax - xmin);
     const h = Math.min(canvas.height - y, ymax - ymin);
 
-    if (w < 5 || h < 5) continue; // Skip tiny boxes
+    if (w < 10 || h < 10) continue;
 
-    const className = COCO_CLASSES[classes[i]] || `C${classes[i]}`;
+    const className = COCO_CLASSES[classes[i]] || `Class_${classes[i]}`;
     const confidence = Math.round(scores[i] * 100);
     const label = `${className} ${confidence}%`;
 
-    // Bright colors for mobile visibility
-    const colors = [
-      '#FF0000', '#00FF00', '#0000FF', '#FFFF00', 
-      '#FF00FF', '#00FFFF', '#FFA500', '#FF69B4'
-    ];
+    const colors = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF'];
     const color = colors[classes[i] % colors.length];
 
-    // Thick bounding box for mobile
+    // Thick bounding box
     ctx.strokeStyle = color;
     ctx.lineWidth = 4;
     ctx.strokeRect(x, y, w, h);
 
-    // Label with background
+    // Label background
     ctx.font = 'bold 14px Arial';
     const textWidth = ctx.measureText(label).width;
     const padding = 4;
@@ -242,22 +391,6 @@ function drawDetections(boxes, scores, classes) {
     ctx.fillStyle = 'white';
     ctx.fillText(label, x + padding, y - 8);
   }
-}
-
-// --------------------- FPS Counter ---------------------
-let frameCount = 0;
-let lastTime = Date.now();
-let fps = 0;
-
-function getFPS() {
-  frameCount++;
-  const now = Date.now();
-  if (now - lastTime >= 1000) {
-    fps = frameCount;
-    frameCount = 0;
-    lastTime = now;
-  }
-  return fps;
 }
 
 // --------------------- Model Processing ---------------------
@@ -273,7 +406,6 @@ function processModelOutput(output) {
   } else if (output.shape.length === 2) {
     predictions = output.arraySync();
   } else {
-    console.warn('Unexpected output shape:', output.shape);
     return { boxes: [], scores: [], classes: [] };
   }
 
@@ -290,7 +422,6 @@ function processModelOutput(output) {
     
     const [centerX, centerY, width, height, objectness, ...classScores] = pred;
     
-    // Find best class
     let maxScore = -1;
     let bestClass = -1;
     
@@ -318,52 +449,6 @@ function processModelOutput(output) {
   return { boxes, scores, classes };
 }
 
-// --------------------- NMS Function ---------------------
-function nonMaxSuppression(boxes, scores, iouThreshold = 0.4) {
-  if (boxes.length === 0) return [];
-  
-  const indices = scores.map((score, index) => ({ score, index }))
-                         .sort((a, b) => b.score - a.score)
-                         .map(item => item.index);
-  
-  const selected = [];
-  
-  while (indices.length > 0) {
-    const current = indices.shift();
-    selected.push(current);
-    
-    const remaining = [];
-    for (const idx of indices) {
-      const iou = calculateIoU(boxes[current], boxes[idx]);
-      if (iou <= iouThreshold) {
-        remaining.push(idx);
-      }
-    }
-    indices.length = 0;
-    indices.push(...remaining);
-  }
-  
-  return selected;
-}
-
-function calculateIoU(boxA, boxB) {
-  const [y1A, x1A, y2A, x2A] = boxA;
-  const [y1B, x1B, y2B, x2B] = boxB;
-  
-  const intersectX1 = Math.max(x1A, x1B);
-  const intersectY1 = Math.max(y1A, y1B);
-  const intersectX2 = Math.min(x2A, x2B);
-  const intersectY2 = Math.min(y2A, y2B);
-  
-  const intersectArea = Math.max(0, intersectX2 - intersectX1) * 
-                       Math.max(0, intersectY2 - intersectY1);
-  
-  const boxAArea = (x2A - x1A) * (y2A - y1A);
-  const boxBArea = (x2B - x1B) * (y2B - y1B);
-  
-  return intersectArea / (boxAArea + boxBArea - intersectArea + 1e-8);
-}
-
 // --------------------- Detection Loop ---------------------
 async function detectLoop() {
   if (!isDetecting || !model) {
@@ -371,65 +456,39 @@ async function detectLoop() {
     return;
   }
 
-  // Check if video is ready
-  if (!webcam.videoWidth || webcam.paused || webcam.ended) {
-    // Just draw video frame without detection
-    if (webcam.videoWidth > 0) {
-      ctx.drawImage(webcam, 0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = 'rgba(255, 255, 0, 0.7)';
-      ctx.fillRect(10, 10, 200, 30);
-      ctx.fillStyle = 'black';
-      ctx.font = 'bold 14px Arial';
-      ctx.fillText('Loading model...', 15, 28);
-    }
-    requestAnimationFrame(detectLoop);
-    return;
-  }
-
   try {
-    // Create input tensor
-    const input = tf.tidy(() => {
-      return tf.browser.fromPixels(webcam)
-        .resizeBilinear([640, 640])
-        .div(255.0)
-        .expandDims(0);
-    });
+    // Only run detection if camera is ready
+    if (cameraReady && webcam.videoWidth > 0) {
+      const input = tf.tidy(() => {
+        return tf.browser.fromPixels(webcam)
+          .resizeBilinear([640, 640])
+          .div(255.0)
+          .expandDims(0);
+      });
 
-    // Run inference
-    let output;
-    try {
-      output = await model.executeAsync(input);
-    } catch (e) {
-      output = model.execute(input);
-    }
+      let output;
+      try {
+        output = await model.executeAsync(input);
+      } catch (e) {
+        output = model.execute(input);
+      }
 
-    // Process results
-    const { boxes, scores, classes } = processModelOutput(output);
-    const selectedIndices = nonMaxSuppression(boxes, scores, 0.4);
-    
-    const finalBoxes = selectedIndices.map(i => boxes[i]);
-    const finalScores = selectedIndices.map(i => scores[i]);
-    const finalClasses = selectedIndices.map(i => classes[i]);
+      const { boxes, scores, classes } = processModelOutput(output);
+      drawDetections(boxes, scores, classes);
 
-    // Draw results
-    drawDetections(finalBoxes, finalScores, finalClasses);
-
-    // Cleanup
-    input.dispose();
-    if (Array.isArray(output)) {
-      output.forEach(t => t.dispose());
+      input.dispose();
+      if (Array.isArray(output)) {
+        output.forEach(t => t.dispose());
+      } else {
+        output.dispose();
+      }
     } else {
-      output.dispose();
+      // Just draw "camera not ready" message
+      drawDetections([], [], []);
     }
 
   } catch (error) {
     console.error('Detection error:', error);
-    // Draw error message
-    ctx.fillStyle = 'red';
-    ctx.fillRect(10, 10, 300, 40);
-    ctx.fillStyle = 'white';
-    ctx.font = 'bold 14px Arial';
-    ctx.fillText('Detection Error - Check Console', 15, 30);
   }
 
   requestAnimationFrame(detectLoop);
@@ -438,6 +497,7 @@ async function detectLoop() {
 // --------------------- Initialization ---------------------
 async function initializeApp() {
   try {
+    console.log('🚀 Initializing app...');
     statusEl.textContent = 'Initializing...';
     
     // Check TensorFlow
@@ -446,25 +506,15 @@ async function initializeApp() {
       return;
     }
     
-    console.log('TensorFlow.js version:', tf.version.tfjs);
-    console.log('Mobile device:', isMobile());
-    
-    // Setup camera first
-    statusEl.textContent = 'Setting up camera...';
-    const cameraSuccess = await setupCamera();
-    
-    if (!cameraSuccess) {
-      statusEl.textContent = 'Camera failed. Tap screen and allow permissions.';
-      return;
-    }
+    console.log('✅ TensorFlow.js version:', tf.version.tfjs);
 
-    // Load model
+    // Load model first (without camera)
     statusEl.textContent = 'Loading AI model...';
     try {
       model = await tf.loadGraphModel(MODEL_URL);
-      console.log('Model loaded successfully');
+      console.log('✅ Model loaded successfully');
       
-      // Warm up model
+      // Model warmup
       const dummyInput = tf.zeros([1, 640, 640, 3]);
       const warmupOutput = await model.executeAsync(dummyInput);
       dummyInput.dispose();
@@ -473,42 +523,35 @@ async function initializeApp() {
       } else {
         warmupOutput.dispose();
       }
+      console.log('✅ Model warmed up');
       
     } catch (error) {
-      console.error('Model loading failed:', error);
-      statusEl.textContent = 'Model loading failed - check model files';
+      console.error('❌ Model loading failed:', error);
+      statusEl.textContent = 'Model loading failed';
       return;
     }
 
-    // Start detection
-    statusEl.textContent = 'Starting detection...';
+    // Set up canvas with default size
+    canvas.width = 640;
+    canvas.height = 480;
+    
+    // Start detection loop (will show "camera not ready" until camera works)
     isDetecting = true;
     detectLoop();
     
-    statusEl.textContent = 'Detection active';
+    // Show camera button
+    statusEl.textContent = 'Click button to start camera';
+    createCameraButton();
     
   } catch (error) {
-    console.error('Initialization failed:', error);
+    console.error('❌ Initialization failed:', error);
     statusEl.textContent = `Error: ${error.message}`;
   }
 }
 
 // --------------------- Start Application ---------------------
-// Wait for page load and user interaction on mobile
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    if (isMobile()) {
-      statusEl.textContent = 'Tap anywhere to start camera';
-      document.addEventListener('touchstart', initializeApp, { once: true });
-    } else {
-      initializeApp();
-    }
-  });
+  document.addEventListener('DOMContentLoaded', initializeApp);
 } else {
-  if (isMobile()) {
-    statusEl.textContent = 'Tap anywhere to start camera';
-    document.addEventListener('touchstart', initializeApp, { once: true });
-  } else {
-    initializeApp();
-  }
+  initializeApp();
 }
