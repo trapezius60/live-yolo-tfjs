@@ -2,26 +2,27 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>YOLOv8 Real-Time Detection</title>
+  <title>YOLOv8 Real-time Detection</title>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.21.0/dist/tf.min.js"></script>
   <style>
-    body { background: #222; color: #fff; font-family: sans-serif; text-align: center; }
-    #canvas { border: 2px solid white; margin-top: 10px; }
-    #controls { margin: 10px 0; }
+    body { font-family: Arial, sans-serif; text-align: center; background: #f0f0f0; margin: 0; padding: 20px; }
+    canvas { border: 2px solid black; margin-top: 10px; }
+    #controls { margin-top: 15px; }
+    #status { margin-top: 10px; font-weight: bold; }
   </style>
 </head>
 <body>
-  <h1>YOLOv8 Real-Time Detection</h1>
-  <video id="webcam" autoplay muted playsinline style="display:none;"></video>
+  <h1>YOLOv8 Real-time Detection</h1>
+
   <canvas id="canvas"></canvas>
   <div id="controls">
-    <label for="thresh">Confidence threshold: </label>
+    <label>Confidence threshold: <span id="threshVal">0.25</span></label><br>
     <input type="range" id="thresh" min="0" max="1" step="0.01" value="0.25">
-    <span id="threshVal">0.25</span>
   </div>
-  <div id="status">Initializing…</div>
+  <div id="status">Loading...</div>
 
-  <!-- Script -->
+  <video id="webcam" style="display:none;"></video>
+
   <script src="script.js"></script>
 </body>
 </html>
