@@ -1,5 +1,5 @@
 // --------------------- Config ---------------------
-const MODEL_URL = './yolov8n_web_model/model.json';  // path to your TFJS model
+const MODEL_URL = './yolov8n_web_model/model.json';  // TFJS model folder
 const COCO_CLASSES = [
  'person','bicycle','car','motorcycle','airplane','bus','train','truck','boat','traffic light',
  'fire hydrant','stop sign','parking meter','bench','bird','cat','dog','horse','sheep','cow',
@@ -25,7 +25,10 @@ thresh.addEventListener('input', () => {
 
 // --------------------- Webcam Setup ---------------------
 async function setupCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { exact: "environment" } }, // back camera
+    audio: false
+  });
   webcam.srcObject = stream;
   await new Promise(res => (webcam.onloadedmetadata = res));
   canvas.width = webcam.videoWidth;
@@ -63,7 +66,7 @@ function drawDetections(boxes, scores, classes) {
   }
 }
 
-// --------------------- NMS ---------------------
+// --------------------- Non-Max Suppression ---------------------
 function nonMaxSuppression(boxes, scores, iouThreshold=0.5) {
   const selectedIndices = [];
   const sorted = scores
@@ -97,11 +100,12 @@ function intersectionOverUnion(boxA, boxB) {
 
 // --------------------- Detection Loop ---------------------
 let model;
+const numClasses = 80;
+
 async function detectLoop() {
   const input = tf.tidy(() => {
     const frame = tf.browser.fromPixels(webcam);
-    const resized = tf.image.resizeBilinear(frame, [640,640]);
-    return resized.div(255.0).expandDims(0);
+    return tf.image.resizeBilinear(frame, [640,640]).div(255.0).expandDims(0);
   });
 
   let output;
@@ -112,11 +116,10 @@ async function detectLoop() {
   }
 
   const data = await output.data();
-  const shape = output.shape; // [1,84,8400]
-  const numClasses = 80;
-  const numAnchors = shape[2];
+  const numAnchors = output.shape[2];
 
-  const boxes = [], scores = [], classesArr = [];
+  const boxes = [], scoresArr = [], classesArr = [];
+  const confThreshold = Number(thresh.value);
 
   for(let i=0;i<numAnchors;i++){
     const offset = i*(numClasses+4);
@@ -131,36 +134,33 @@ async function detectLoop() {
       if(score>maxScore){ maxScore=score; maxClass=c; }
     }
 
-    if(maxScore>Number(thresh.value)){
-      const xmin=(x-w/2)/640;
-      const ymin=(y-h/2)/640;
-      const xmax=(x+w/2)/640;
-      const ymax=(y+h/2)/640;
-      boxes.push([ymin,xmin,ymax,xmax]);
-      scores.push(maxScore);
+    if(maxScore > confThreshold){
+      boxes.push([(y-h/2)/640, (x-w/2)/640, (y+h/2)/640, (x+w/2)/640]);
+      scoresArr.push(maxScore);
       classesArr.push(maxClass);
     }
   }
 
-  const selected = nonMaxSuppression(boxes,scores,0.5);
-  const finalBoxes = selected.map(i=>boxes[i]);
-  const finalScores = selected.map(i=>scores[i]);
-  const finalClasses = selected.map(i=>classesArr[i]);
-
-  drawDetections(finalBoxes, finalScores, finalClasses);
+  const selected = nonMaxSuppression(boxes, scoresArr, 0.5);
+  drawDetections(
+    selected.map(i=>boxes[i]),
+    selected.map(i=>scoresArr[i]),
+    selected.map(i=>classesArr[i])
+  );
 
   tf.dispose([input, output]);
-  await tf.nextFrame();
   requestAnimationFrame(detectLoop);
 }
 
-// --------------------- Init ---------------------
+// --------------------- Initialization ---------------------
 (async () => {
   try {
     statusEl.textContent = 'Requesting camera…';
     await setupCamera();
+
     statusEl.textContent = 'Loading model…';
     model = await tf.loadGraphModel(MODEL_URL);
+
     statusEl.textContent = 'Model loaded. Starting detection…';
     detectLoop();
   } catch(e){
