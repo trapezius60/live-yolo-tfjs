@@ -1,33 +1,27 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>YOLOv8 TFJS — Real-Time Detection</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.21.0/dist/tf.min.js"></script>
-  <script defer src="script.js"></script>
+  <meta charset="UTF-8">
+  <title>YOLOv8 Real-Time Detection</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.21.0/dist/tf.min.js"></script>
   <style>
-    body { margin: 0; font-family: system-ui, sans-serif; background:#0b0b0b; color:#eee; }
-    .wrap { position: relative; width: 100%; max-width: 900px; margin: 24px auto; }
-    video, canvas { width: 100%; height: auto; border-radius: 12px; display:block; }
-    .panel { display:flex; gap:12px; align-items:center; margin:12px 0; flex-wrap:wrap; }
-    .badge { padding:4px 10px; background:#1c1c1c; border-radius:20px; font-size:12px; }
-    input[type="range"] { width: 200px; }
-    .status { font-size: 12px; opacity:.8; }
+    body { background: #222; color: #fff; font-family: sans-serif; text-align: center; }
+    #canvas { border: 2px solid white; margin-top: 10px; }
+    #controls { margin: 10px 0; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <h2>YOLOv8 TFJS — Real-Time Detection</h2>
-    <div class="panel">
-      <span class="badge">Model: <code>yolov8n_web_model/model.json</code></span>
-      <label>Score ≥ <span id="threshVal">0.25</span>
-        <input id="thresh" type="range" min="0" max="1" step="0.01" value="0.25">
-      </label>
-      <span class="status" id="status">Loading TFJS…</span>
-    </div>
-    <video id="webcam" autoplay playsinline muted></video>
-    <canvas id="canvas"></canvas>
+  <h1>YOLOv8 Real-Time Detection</h1>
+  <video id="webcam" autoplay muted playsinline style="display:none;"></video>
+  <canvas id="canvas"></canvas>
+  <div id="controls">
+    <label for="thresh">Confidence threshold: </label>
+    <input type="range" id="thresh" min="0" max="1" step="0.01" value="0.25">
+    <span id="threshVal">0.25</span>
   </div>
+  <div id="status">Initializing…</div>
+
+  <!-- Script -->
+  <script src="script.js"></script>
 </body>
 </html>
