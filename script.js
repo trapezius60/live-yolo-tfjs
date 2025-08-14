@@ -1,5 +1,5 @@
 // --------------------- Config ---------------------
-const MODEL_URL = './yolov8n_web_model/model.json';  // TFJS model folder
+const MODEL_URL = './yolov8n_web_model/model.json'; // TFJS model folder
 const COCO_CLASSES = [
  'person','bicycle','car','motorcycle','airplane','bus','train','truck','boat','traffic light',
  'fire hydrant','stop sign','parking meter','bench','bird','cat','dog','horse','sheep','cow',
@@ -66,89 +66,39 @@ function drawDetections(boxes, scores, classes) {
   }
 }
 
-// --------------------- Non-Max Suppression ---------------------
-function nonMaxSuppression(boxes, scores, iouThreshold=0.5) {
-  const selectedIndices = [];
-  const sorted = scores
-    .map((s,i)=>({score:s, i}))
-    .sort((a,b)=>b.score - a.score)
-    .map(o=>o.i);
-
-  while (sorted.length > 0) {
-    const i = sorted.shift();
-    selectedIndices.push(i);
-    const toRemove = [];
-    for (let j = 0; j < sorted.length; j++) {
-      const k = sorted[j];
-      const iou = intersectionOverUnion(boxes[i], boxes[k]);
-      if (iou > iouThreshold) toRemove.push(j);
-    }
-    for (let r = toRemove.length-1; r>=0; r--) sorted.splice(toRemove[r],1);
-  }
-  return selectedIndices;
-}
-
-function intersectionOverUnion(boxA, boxB) {
-  const [y1A, x1A, y2A, x2A] = boxA;
-  const [y1B, x1B, y2B, x2B] = boxB;
-  const interArea = Math.max(0, Math.min(x2A,x2B)-Math.max(x1A,x1B)) *
-                    Math.max(0, Math.min(y2A,y2B)-Math.max(y1A,y1B));
-  const boxAArea = (x2A-x1A)*(y2A-y1A);
-  const boxBArea = (x2B-x1B)*(y2B-y1B);
-  return interArea / (boxAArea + boxBArea - interArea);
-}
-
 // --------------------- Detection Loop ---------------------
 let model;
-const numClasses = 80;
 
 async function detectLoop() {
-  const input = tf.tidy(() => {
-    const frame = tf.browser.fromPixels(webcam);
-    return tf.image.resizeBilinear(frame, [640,640]).div(255.0).expandDims(0);
-  });
-
-  let output;
-  try {
-    output = await model.executeAsync(input);
-  } catch(e){
-    output = await model.execute(input);
-  }
-
-  const data = await output.data();
-  const numAnchors = output.shape[2];
-
-  const boxes = [], scoresArr = [], classesArr = [];
-  const confThreshold = Number(thresh.value);
-
-  for(let i=0;i<numAnchors;i++){
-    const offset = i*(numClasses+4);
-    const x = data[offset+0];
-    const y = data[offset+1];
-    const w = data[offset+2];
-    const h = data[offset+3];
-
-    let maxScore = -Infinity, maxClass = -1;
-    for(let c=0;c<numClasses;c++){
-      const score = data[offset+4+c];
-      if(score>maxScore){ maxScore=score; maxClass=c; }
-    }
-
-    if(maxScore > confThreshold){
-      boxes.push([(y-h/2)/640, (x-w/2)/640, (y+h/2)/640, (x+w/2)/640]);
-      scoresArr.push(maxScore);
-      classesArr.push(maxClass);
-    }
-  }
-
-  const selected = nonMaxSuppression(boxes, scoresArr, 0.5);
-  drawDetections(
-    selected.map(i=>boxes[i]),
-    selected.map(i=>scoresArr[i]),
-    selected.map(i=>classesArr[i])
+  const input = tf.tidy(() => tf.browser.fromPixels(webcam)
+    .resizeBilinear([640,640])
+    .div(255.0)
+    .expandDims(0)
   );
 
-  tf.dispose([input, output]);
+  let results;
+  try {
+    results = await model.executeAsync(input);
+  } catch(e){
+    results = await model.execute(input);
+  }
+
+  // Ultralytics TFJS output: [boxes, scores, classes]
+  const boxes = results[0].arraySync();   // [num_boxes,4] normalized ymin,xmin,ymax,xmax
+  const scores = results[1].arraySync();  // [num_boxes]
+  const classes = results[2].arraySync(); // [num_boxes]
+
+  // apply confidence threshold
+  const confThreshold = Number(thresh.value);
+  const filteredIndices = scores.map((s,i)=>s>confThreshold?i:-1).filter(i=>i>=0);
+
+  drawDetections(
+    filteredIndices.map(i=>boxes[i]),
+    filteredIndices.map(i=>scores[i]),
+    filteredIndices.map(i=>classes[i])
+  );
+
+  tf.dispose([input, results]);
   requestAnimationFrame(detectLoop);
 }
 
