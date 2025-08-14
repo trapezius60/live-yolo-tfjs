@@ -24,14 +24,10 @@ let model;
 let currentStream;
 let animationId;
 let isDetecting = false;
-let debugMode = true; // Enable debug logging
 
-// --------------------- Debug Functions ---------------------
-function debugLog(message, data = null) {
-  if (debugMode) {
-    console.log(`[DEBUG] ${message}`, data || '');
-    statusEl.textContent = message;
-  }
+// --------------------- Mobile Detection ---------------------
+function isMobile() {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 }
 
 // --------------------- Event Listeners ---------------------
@@ -39,259 +35,247 @@ thresh.addEventListener('input', () => {
   threshVal.textContent = Number(thresh.value).toFixed(2);
 });
 
+// Add click handler for iOS - sometimes requires user interaction
+document.addEventListener('click', async () => {
+  if (!currentStream && webcam.srcObject === null) {
+    console.log('User clicked - attempting camera access');
+    await setupCamera();
+  }
+}, { once: true });
+
 // --------------------- Camera Functions ---------------------
-async function listAllCameras() {
-  try {
-    // First request permissions to get device labels
-    const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
-    tempStream.getTracks().forEach(track => track.stop());
-    
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const videoDevices = devices.filter(device => device.kind === 'videoinput');
-    
-    debugLog(`Found ${videoDevices.length} camera(s)`);
-    videoDevices.forEach((device, index) => {
-      console.log(`Camera ${index + 1}:`, {
-        deviceId: device.deviceId,
-        label: device.label,
-        groupId: device.groupId
-      });
-    });
-    
-    return videoDevices;
-  } catch (error) {
-    debugLog('Error listing cameras', error);
-    return [];
-  }
-}
-
-async function trySpecificCamera(deviceId, label) {
-  debugLog(`Trying camera: ${label}`);
-  
-  try {
-    const constraints = {
-      video: {
-        deviceId: { exact: deviceId },
-        width: { ideal: 1280, max: 1920 },
-        height: { ideal: 720, max: 1080 }
-      },
-      audio: false
-    };
-    
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-    debugLog(`✅ Successfully opened: ${label}`);
-    return stream;
-  } catch (error) {
-    debugLog(`❌ Failed to open: ${label} - ${error.message}`);
-    return null;
-  }
-}
-
 async function setupCamera() {
+  statusEl.textContent = 'Requesting camera access...';
+  
+  // Stop any existing stream
   if (currentStream) {
     currentStream.getTracks().forEach(track => track.stop());
     currentStream = null;
   }
 
-  debugLog('🎥 Starting camera setup...');
-  
-  // List all available cameras
-  const cameras = await listAllCameras();
-  if (cameras.length === 0) {
-    debugLog('❌ No cameras found');
-    return false;
-  }
+  const mobile = isMobile();
+  console.log('Device is mobile:', mobile);
 
-  // Try to find and use back camera first
-  const backCameraKeywords = ['back', 'rear', 'environment', 'facing back', 'camera 0'];
-  let backCamera = null;
-  
-  for (const camera of cameras) {
-    const label = camera.label.toLowerCase();
-    if (backCameraKeywords.some(keyword => label.includes(keyword))) {
-      debugLog(`🎯 Found potential back camera: ${camera.label}`);
-      backCamera = camera;
-      break;
-    }
-  }
+  // Mobile-optimized constraints
+  const mobileConstraints = {
+    video: {
+      facingMode: { exact: "environment" }, // Force back camera
+      width: { ideal: 1280, max: 1920 },
+      height: { ideal: 720, max: 1080 }
+    },
+    audio: false
+  };
 
-  // Try back camera first if found
-  if (backCamera) {
-    currentStream = await trySpecificCamera(backCamera.deviceId, backCamera.label);
-    if (currentStream) {
-      webcam.srcObject = currentStream;
-      await waitForVideoReady();
-      setupCanvas();
-      return true;
-    }
-  }
-
-  // Try all cameras one by one
-  debugLog('🔄 Trying all cameras...');
-  for (let i = 0; i < cameras.length; i++) {
-    const camera = cameras[i];
-    currentStream = await trySpecificCamera(camera.deviceId, camera.label);
-    if (currentStream) {
-      webcam.srcObject = currentStream;
-      await waitForVideoReady();
-      setupCanvas();
-      return true;
-    }
-  }
-
-  // Last resort: try with basic constraints
-  debugLog('🆘 Trying basic camera constraints...');
-  try {
-    currentStream = await navigator.mediaDevices.getUserMedia({
+  const fallbackConstraints = [
+    // Try back camera with exact facingMode
+    {
+      video: { facingMode: { exact: "environment" } },
+      audio: false
+    },
+    // Try back camera with ideal facingMode
+    {
       video: { facingMode: { ideal: "environment" } },
       audio: false
-    });
-    webcam.srcObject = currentStream;
-    await waitForVideoReady();
-    setupCanvas();
-    return true;
-  } catch (error) {
-    debugLog(`❌ All camera attempts failed: ${error.message}`);
-    return false;
-  }
-}
-
-async function waitForVideoReady() {
-  return new Promise((resolve) => {
-    if (webcam.readyState >= 2) {
-      resolve();
-    } else {
-      webcam.addEventListener('loadeddata', resolve, { once: true });
+    },
+    // Try front camera as fallback
+    {
+      video: { facingMode: "user" },
+      audio: false
+    },
+    // Basic video request
+    {
+      video: true,
+      audio: false
+    },
+    // Very basic request with lower resolution
+    {
+      video: {
+        width: { ideal: 640 },
+        height: { ideal: 480 }
+      },
+      audio: false
     }
-  });
+  ];
+
+  // Add mobile constraints to the beginning
+  if (mobile) {
+    fallbackConstraints.unshift(mobileConstraints);
+  }
+
+  for (let i = 0; i < fallbackConstraints.length; i++) {
+    const constraints = fallbackConstraints[i];
+    console.log(`Trying camera constraint ${i + 1}:`, constraints);
+    statusEl.textContent = `Trying camera option ${i + 1}...`;
+
+    try {
+      currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+      
+      if (currentStream && currentStream.getVideoTracks().length > 0) {
+        const videoTrack = currentStream.getVideoTracks()[0];
+        const settings = videoTrack.getSettings();
+        console.log('Camera settings:', settings);
+        console.log('Camera facing mode:', settings.facingMode);
+        
+        webcam.srcObject = currentStream;
+        
+        // Wait for video to be ready
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error('Video load timeout'));
+          }, 10000);
+          
+          webcam.addEventListener('loadeddata', () => {
+            clearTimeout(timeout);
+            console.log(`Video ready: ${webcam.videoWidth}x${webcam.videoHeight}`);
+            resolve();
+          }, { once: true });
+          
+          webcam.addEventListener('error', (e) => {
+            clearTimeout(timeout);
+            reject(e);
+          }, { once: true });
+          
+          // Force play on mobile
+          webcam.play().catch(console.warn);
+        });
+
+        // Setup canvas
+        canvas.width = webcam.videoWidth;
+        canvas.height = webcam.videoHeight;
+        
+        // Make canvas responsive on mobile
+        const maxWidth = Math.min(window.innerWidth - 20, 800);
+        const aspectRatio = canvas.height / canvas.width;
+        canvas.style.width = `${maxWidth}px`;
+        canvas.style.height = `${maxWidth * aspectRatio}px`;
+        
+        statusEl.textContent = `Camera active: ${settings.facingMode || 'unknown'} facing`;
+        
+        // Test drawing video frame
+        drawVideoFrame();
+        
+        return true;
+      }
+      
+    } catch (error) {
+      console.log(`Camera constraint ${i + 1} failed:`, error.message);
+      if (currentStream) {
+        currentStream.getTracks().forEach(track => track.stop());
+        currentStream = null;
+      }
+    }
+  }
+
+  statusEl.textContent = 'Camera access failed. Please check permissions.';
+  return false;
 }
 
-function setupCanvas() {
-  canvas.width = webcam.videoWidth;
-  canvas.height = webcam.videoHeight;
-  
-  debugLog(`📐 Canvas set to: ${canvas.width}x${canvas.height}`);
-  
-  // Style canvas for responsive display
-  const maxWidth = Math.min(window.innerWidth - 40, 800);
-  const aspectRatio = canvas.height / canvas.width;
-  canvas.style.width = `${maxWidth}px`;
-  canvas.style.height = `${maxWidth * aspectRatio}px`;
-  
-  // Test drawing to make sure canvas works
-  testCanvasDrawing();
-}
-
-function testCanvasDrawing() {
-  debugLog('🎨 Testing canvas drawing...');
-  
-  // Draw a test rectangle
-  ctx.strokeStyle = 'red';
-  ctx.lineWidth = 5;
-  ctx.strokeRect(50, 50, 100, 100);
-  ctx.fillStyle = 'yellow';
-  ctx.font = '20px Arial';
-  ctx.fillText('TEST', 60, 80);
-  
-  setTimeout(() => {
-    // Clear test drawing
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    debugLog('✅ Canvas drawing test completed');
-  }, 2000);
-}
-
-// --------------------- Detection Functions ---------------------
-function drawDetections(boxes, scores, classes) {
-  // Clear canvas and draw video frame
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(webcam, 0, 0, canvas.width, canvas.height);
-  
-  debugLog(`🎯 Drawing ${boxes.length} detections`);
-  
-  if (boxes.length === 0) {
-    // Draw "No objects detected" message
-    ctx.fillStyle = 'rgba(255, 255, 0, 0.8)';
-    ctx.fillRect(10, 10, 200, 30);
+function drawVideoFrame() {
+  if (webcam.videoWidth > 0 && webcam.videoHeight > 0) {
+    ctx.drawImage(webcam, 0, 0, canvas.width, canvas.height);
+    
+    // Draw status overlay
+    ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
+    ctx.fillRect(10, 10, 200, 40);
     ctx.fillStyle = 'black';
     ctx.font = 'bold 16px Arial';
-    ctx.fillText('No objects detected', 15, 30);
-    return;
+    ctx.fillText('Camera Active!', 15, 30);
+    
+    console.log('Video frame drawn successfully');
+  } else {
+    console.log('Video not ready yet');
+    setTimeout(drawVideoFrame, 100);
   }
+}
 
-  // Draw each detection
+// --------------------- Drawing Functions ---------------------
+function drawDetections(boxes, scores, classes) {
+  // Always draw the video frame first
+  if (webcam.videoWidth > 0) {
+    ctx.drawImage(webcam, 0, 0, canvas.width, canvas.height);
+  }
+  
+  // Draw detection info
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  ctx.fillRect(10, 10, 250, 30);
+  ctx.fillStyle = 'white';
+  ctx.font = 'bold 14px Arial';
+  ctx.fillText(`Detections: ${boxes.length} | FPS: ${getFPS()}`, 15, 28);
+  
+  if (boxes.length === 0) return;
+
+  // Draw each detection with bright colors
   for (let i = 0; i < boxes.length; i++) {
     const [ymin, xmin, ymax, xmax] = boxes[i];
-    const score = scores[i];
-    const classId = classes[i];
     
-    // Log each detection
-    console.log(`Detection ${i}:`, {
-      box: [ymin, xmin, ymax, xmax],
-      score: score,
-      class: COCO_CLASSES[classId] || `Unknown(${classId})`
-    });
-    
-    // Ensure coordinates are valid
-    const x = Math.max(0, Math.min(xmin, canvas.width - 1));
-    const y = Math.max(0, Math.min(ymin, canvas.height - 1));
-    const w = Math.max(1, Math.min(xmax - x, canvas.width - x));
-    const h = Math.max(1, Math.min(ymax - y, canvas.height - y));
+    const x = Math.max(0, xmin);
+    const y = Math.max(0, ymin);
+    const w = Math.min(canvas.width - x, xmax - xmin);
+    const h = Math.min(canvas.height - y, ymax - ymin);
 
-    const className = COCO_CLASSES[classId] || `Class_${classId}`;
-    const confidence = (score * 100).toFixed(1);
+    if (w < 5 || h < 5) continue; // Skip tiny boxes
+
+    const className = COCO_CLASSES[classes[i]] || `C${classes[i]}`;
+    const confidence = Math.round(scores[i] * 100);
     const label = `${className} ${confidence}%`;
 
-    // Use bright, contrasting colors
-    const colors = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF'];
-    const color = colors[classId % colors.length];
+    // Bright colors for mobile visibility
+    const colors = [
+      '#FF0000', '#00FF00', '#0000FF', '#FFFF00', 
+      '#FF00FF', '#00FFFF', '#FFA500', '#FF69B4'
+    ];
+    const color = colors[classes[i] % colors.length];
 
-    // Draw thick bounding box
+    // Thick bounding box for mobile
     ctx.strokeStyle = color;
     ctx.lineWidth = 4;
     ctx.strokeRect(x, y, w, h);
 
-    // Draw label background
-    ctx.font = 'bold 16px Arial';
-    const textMetrics = ctx.measureText(label);
-    const textWidth = textMetrics.width;
-    const textHeight = 20;
-    const padding = 6;
+    // Label with background
+    ctx.font = 'bold 14px Arial';
+    const textWidth = ctx.measureText(label).width;
+    const padding = 4;
 
     ctx.fillStyle = color;
-    ctx.fillRect(x, y - textHeight - padding, textWidth + padding * 2, textHeight + padding);
-
-    // Draw label text
+    ctx.fillRect(x, y - 25, textWidth + padding * 2, 25);
+    
     ctx.fillStyle = 'white';
-    ctx.fillText(label, x + padding, y - 6);
+    ctx.fillText(label, x + padding, y - 8);
   }
+}
 
-  // Draw detection count
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-  ctx.fillRect(10, canvas.height - 40, 250, 30);
-  ctx.fillStyle = 'white';
-  ctx.font = 'bold 16px Arial';
-  ctx.fillText(`Objects detected: ${boxes.length}`, 15, canvas.height - 20);
+// --------------------- FPS Counter ---------------------
+let frameCount = 0;
+let lastTime = Date.now();
+let fps = 0;
+
+function getFPS() {
+  frameCount++;
+  const now = Date.now();
+  if (now - lastTime >= 1000) {
+    fps = frameCount;
+    frameCount = 0;
+    lastTime = now;
+  }
+  return fps;
 }
 
 // --------------------- Model Processing ---------------------
 function processModelOutput(output) {
-  debugLog('🧠 Processing model output...');
-  console.log('Model output shape:', output.shape);
-  
   let predictions;
+  
+  if (Array.isArray(output)) {
+    output = output[0];
+  }
+  
   if (output.shape.length === 3) {
-    // [1, num_boxes, 85] format
     predictions = output.arraySync()[0];
   } else if (output.shape.length === 2) {
-    // [num_boxes, 85] format
     predictions = output.arraySync();
   } else {
-    debugLog('❌ Unexpected output shape', output.shape);
+    console.warn('Unexpected output shape:', output.shape);
     return { boxes: [], scores: [], classes: [] };
   }
-
-  debugLog(`📊 Processing ${predictions.length} predictions`);
-  console.log('First prediction sample:', predictions[0]?.slice(0, 10));
 
   const boxes = [];
   const scores = [];
@@ -301,16 +285,12 @@ function processModelOutput(output) {
   const scaleX = canvas.width / 640;
   const scaleY = canvas.height / 640;
 
-  let validPredictions = 0;
-  
-  for (let i = 0; i < predictions.length; i++) {
-    const pred = predictions[i];
-    
+  for (const pred of predictions) {
     if (!pred || pred.length < 85) continue;
     
     const [centerX, centerY, width, height, objectness, ...classScores] = pred;
     
-    // Find the class with highest score
+    // Find best class
     let maxScore = -1;
     let bestClass = -1;
     
@@ -321,13 +301,9 @@ function processModelOutput(output) {
       }
     }
     
-    // Calculate final confidence
     const finalConfidence = objectness * maxScore;
     
     if (finalConfidence >= confThreshold) {
-      validPredictions++;
-      
-      // Convert to corner coordinates and scale
       const x1 = (centerX - width / 2) * scaleX;
       const y1 = (centerY - height / 2) * scaleY;
       const x2 = (centerX + width / 2) * scaleX;
@@ -339,17 +315,16 @@ function processModelOutput(output) {
     }
   }
   
-  debugLog(`✅ Found ${validPredictions} valid detections above threshold ${confThreshold}`);
-  
   return { boxes, scores, classes };
 }
 
-// Simple NMS implementation
+// --------------------- NMS Function ---------------------
 function nonMaxSuppression(boxes, scores, iouThreshold = 0.4) {
   if (boxes.length === 0) return [];
   
-  const indices = Array.from({length: boxes.length}, (_, i) => i);
-  indices.sort((a, b) => scores[b] - scores[a]);
+  const indices = scores.map((score, index) => ({ score, index }))
+                         .sort((a, b) => b.score - a.score)
+                         .map(item => item.index);
   
   const selected = [];
   
@@ -391,7 +366,22 @@ function calculateIoU(boxA, boxB) {
 
 // --------------------- Detection Loop ---------------------
 async function detectLoop() {
-  if (!isDetecting || !model || !webcam.videoWidth) {
+  if (!isDetecting || !model) {
+    requestAnimationFrame(detectLoop);
+    return;
+  }
+
+  // Check if video is ready
+  if (!webcam.videoWidth || webcam.paused || webcam.ended) {
+    // Just draw video frame without detection
+    if (webcam.videoWidth > 0) {
+      ctx.drawImage(webcam, 0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'rgba(255, 255, 0, 0.7)';
+      ctx.fillRect(10, 10, 200, 30);
+      ctx.fillStyle = 'black';
+      ctx.font = 'bold 14px Arial';
+      ctx.fillText('Loading model...', 15, 28);
+    }
     requestAnimationFrame(detectLoop);
     return;
   }
@@ -405,24 +395,16 @@ async function detectLoop() {
         .expandDims(0);
     });
 
-    // Run model inference
+    // Run inference
     let output;
     try {
       output = await model.executeAsync(input);
     } catch (e) {
-      debugLog('Using synchronous execution');
       output = model.execute(input);
     }
 
-    // Handle multiple outputs
-    if (Array.isArray(output)) {
-      output = output[0];
-    }
-
-    // Process predictions
+    // Process results
     const { boxes, scores, classes } = processModelOutput(output);
-
-    // Apply NMS
     const selectedIndices = nonMaxSuppression(boxes, scores, 0.4);
     
     const finalBoxes = selectedIndices.map(i => boxes[i]);
@@ -432,7 +414,7 @@ async function detectLoop() {
     // Draw results
     drawDetections(finalBoxes, finalScores, finalClasses);
 
-    // Clean up
+    // Cleanup
     input.dispose();
     if (Array.isArray(output)) {
       output.forEach(t => t.dispose());
@@ -441,67 +423,92 @@ async function detectLoop() {
     }
 
   } catch (error) {
-    debugLog('❌ Detection error', error);
     console.error('Detection error:', error);
+    // Draw error message
+    ctx.fillStyle = 'red';
+    ctx.fillRect(10, 10, 300, 40);
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 14px Arial';
+    ctx.fillText('Detection Error - Check Console', 15, 30);
   }
 
-  if (isDetecting) {
-    requestAnimationFrame(detectLoop);
-  }
+  requestAnimationFrame(detectLoop);
 }
 
 // --------------------- Initialization ---------------------
 async function initializeApp() {
   try {
-    debugLog('🚀 Starting initialization...');
+    statusEl.textContent = 'Initializing...';
     
-    // Check if TensorFlow.js is loaded
+    // Check TensorFlow
     if (typeof tf === 'undefined') {
-      debugLog('❌ TensorFlow.js not loaded');
+      statusEl.textContent = 'TensorFlow.js not loaded';
       return;
     }
-    debugLog(`✅ TensorFlow.js version: ${tf.version.tfjs}`);
     
-    // Setup camera
+    console.log('TensorFlow.js version:', tf.version.tfjs);
+    console.log('Mobile device:', isMobile());
+    
+    // Setup camera first
+    statusEl.textContent = 'Setting up camera...';
     const cameraSuccess = await setupCamera();
+    
     if (!cameraSuccess) {
-      debugLog('❌ Camera setup failed');
+      statusEl.textContent = 'Camera failed. Tap screen and allow permissions.';
       return;
     }
-    debugLog('✅ Camera setup successful');
 
     // Load model
-    debugLog('📥 Loading model...');
+    statusEl.textContent = 'Loading AI model...';
     try {
       model = await tf.loadGraphModel(MODEL_URL);
-      debugLog('✅ Model loaded successfully');
+      console.log('Model loaded successfully');
       
-      // Print model info
-      console.log('Model inputs:', model.inputs.map(i => ({ name: i.name, shape: i.shape })));
-      console.log('Model outputs:', model.outputs.map(o => ({ name: o.name, shape: o.shape })));
+      // Warm up model
+      const dummyInput = tf.zeros([1, 640, 640, 3]);
+      const warmupOutput = await model.executeAsync(dummyInput);
+      dummyInput.dispose();
+      if (Array.isArray(warmupOutput)) {
+        warmupOutput.forEach(t => t.dispose());
+      } else {
+        warmupOutput.dispose();
+      }
       
-    } catch (modelError) {
-      debugLog('❌ Model loading failed', modelError);
-      console.error('Model loading error:', modelError);
+    } catch (error) {
+      console.error('Model loading failed:', error);
+      statusEl.textContent = 'Model loading failed - check model files';
       return;
     }
 
     // Start detection
-    debugLog('🎯 Starting detection loop...');
+    statusEl.textContent = 'Starting detection...';
     isDetecting = true;
     detectLoop();
     
-    debugLog('✅ Application ready! Look at the console for detailed logs.');
+    statusEl.textContent = 'Detection active';
     
   } catch (error) {
-    debugLog('❌ Initialization failed', error);
-    console.error('Initialization error:', error);
+    console.error('Initialization failed:', error);
+    statusEl.textContent = `Error: ${error.message}`;
   }
 }
 
 // --------------------- Start Application ---------------------
+// Wait for page load and user interaction on mobile
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initializeApp);
+  document.addEventListener('DOMContentLoaded', () => {
+    if (isMobile()) {
+      statusEl.textContent = 'Tap anywhere to start camera';
+      document.addEventListener('touchstart', initializeApp, { once: true });
+    } else {
+      initializeApp();
+    }
+  });
 } else {
-  initializeApp();
+  if (isMobile()) {
+    statusEl.textContent = 'Tap anywhere to start camera';
+    document.addEventListener('touchstart', initializeApp, { once: true });
+  } else {
+    initializeApp();
+  }
 }
