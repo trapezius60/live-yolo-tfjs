@@ -23,19 +23,25 @@ thresh.addEventListener('input', () => {
   threshVal.textContent = Number(thresh.value).toFixed(2);
 });
 
-// --------------------- Webcam ---------------------
+// --------------------- Webcam Setup ---------------------
 async function setupCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: { exact: "environment" } }, // back camera
-    audio: false
-  });
-  webcam.srcObject = stream;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" } }, // back camera if available
+      audio: false
+    });
+    webcam.srcObject = stream;
+  } catch(err) {
+    console.warn('Back camera not available, using default camera.', err);
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    webcam.srcObject = stream;
+  }
   await new Promise(res => (webcam.onloadedmetadata = res));
   canvas.width = webcam.videoWidth;
   canvas.height = webcam.videoHeight;
 }
 
-// --------------------- Draw ---------------------
+// --------------------- Drawing ---------------------
 function drawDetections(boxes, scores, classes) {
   ctx.drawImage(webcam, 0, 0, canvas.width, canvas.height);
   ctx.lineWidth = 2;
@@ -94,7 +100,6 @@ function nonMaxSuppression(boxes, scores, iouThreshold=0.4){
 
 // --------------------- Detection Loop ---------------------
 let model;
-const numClasses = 80;
 
 async function detectLoop() {
   const input = tf.tidy(() => tf.browser.fromPixels(webcam)
@@ -107,7 +112,6 @@ async function detectLoop() {
   try { output = await model.executeAsync(input); } 
   catch(e){ output = await model.execute(input); }
 
-  // raw output shape [1, N, 85]
   const data = output.arraySync()[0]; // [N,85]
   const boxes = [], scoresArr = [], classesArr = [];
   const confThreshold = Number(thresh.value);
@@ -121,12 +125,11 @@ async function detectLoop() {
     const classIndex = classProbs.indexOf(maxClassScore);
     const finalScore = conf * maxClassScore;
 
-    if(finalScore < confThreshold) continue; // filter low confidence
+    if(finalScore < confThreshold) continue; // discard low confidence
 
-    // optional: only detect person (class 0)
+    // optional: only detect person
     // if(classIndex !== 0) continue;
 
-    // scale to canvas size
     const ymin = (y - h/2) * scaleY;
     const xmin = (x - w/2) * scaleX;
     const ymax = (y + h/2) * scaleY;
