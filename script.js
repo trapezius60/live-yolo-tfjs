@@ -1,5 +1,5 @@
 // --------------------- Config ---------------------
-const MODEL_URL = './tfjs_model/model.json';  // path to your TFJS model
+const MODEL_URL = './yolov8n_web_model/model.json';  // path to your TFJS model
 const COCO_CLASSES = [
  'person','bicycle','car','motorcycle','airplane','bus','train','truck','boat','traffic light',
  'fire hydrant','stop sign','parking meter','bench','bird','cat','dog','horse','sheep','cow',
