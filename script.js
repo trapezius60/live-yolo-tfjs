@@ -25,7 +25,7 @@ thresh.addEventListener('input', () => {
 
 // --------------------- Webcam Setup ---------------------
 async function setupCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
   webcam.srcObject = stream;
   await new Promise(res => (webcam.onloadedmetadata = res));
   canvas.width = webcam.videoWidth;
