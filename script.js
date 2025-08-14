@@ -350,46 +350,80 @@ function drawDetections(boxes, scores, classes) {
   
   // Draw detection info
   ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-  ctx.fillRect(10, 10, 300, 30);
+  ctx.fillRect(10, 10, 350, 50);
   ctx.fillStyle = 'white';
-  ctx.font = 'bold 14px Arial';
-  ctx.fillText(`Objects detected: ${boxes.length} | Camera: ${cameraReady ? 'Ready' : 'Not Ready'}`, 15, 28);
+  ctx.font = 'bold 12px Arial';
+  ctx.fillText(`Objects detected: ${boxes.length}`, 15, 25);
+  ctx.fillText(`Canvas: ${canvas.width}x${canvas.height}`, 15, 40);
+  ctx.fillText(`Video: ${webcam.videoWidth}x${webcam.videoHeight}`, 15, 55);
   
   if (boxes.length === 0) return;
+
+  // Calculate actual display scaling
+  const canvasRect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / canvasRect.width;
+  const scaleY = canvas.height / canvasRect.height;
+  
+  console.log('Canvas actual size:', canvas.width, 'x', canvas.height);
+  console.log('Canvas display size:', canvasRect.width, 'x', canvasRect.height);
+  console.log('Display scaling factors:', scaleX, scaleY);
 
   // Draw detections with bright colors
   for (let i = 0; i < boxes.length; i++) {
     const [ymin, xmin, ymax, xmax] = boxes[i];
     
-    const x = Math.max(0, xmin);
-    const y = Math.max(0, ymin);
-    const w = Math.min(canvas.width - x, xmax - xmin);
-    const h = Math.min(canvas.height - y, ymax - ymin);
-
-    if (w < 10 || h < 10) continue;
+    console.log(`Detection ${i} original coords:`, { ymin, xmin, ymax, xmax });
+    
+    // Use coordinates directly (they should already be scaled to canvas size)
+    const x = Math.max(0, Math.min(xmin, canvas.width - 1));
+    const y = Math.max(0, Math.min(ymin, canvas.height - 1));
+    const w = Math.max(1, Math.min(xmax - x, canvas.width - x));
+    const h = Math.max(1, Math.min(ymax - y, canvas.height - y));
+    
+    console.log(`Detection ${i} final coords:`, { x, y, w, h });
 
     const className = COCO_CLASSES[classes[i]] || `Class_${classes[i]}`;
     const confidence = Math.round(scores[i] * 100);
     const label = `${className} ${confidence}%`;
 
-    const colors = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF'];
+    const colors = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF', '#FFA500', '#FF69B4'];
     const color = colors[classes[i] % colors.length];
 
-    // Thick bounding box
+    // Draw thick bounding box
     ctx.strokeStyle = color;
-    ctx.lineWidth = 4;
+    ctx.lineWidth = 5;
     ctx.strokeRect(x, y, w, h);
+    
+    // Draw corner markers for better visibility
+    const markerSize = 20;
+    ctx.fillStyle = color;
+    // Top-left corner
+    ctx.fillRect(x, y, markerSize, 3);
+    ctx.fillRect(x, y, 3, markerSize);
+    // Top-right corner
+    ctx.fillRect(x + w - markerSize, y, markerSize, 3);
+    ctx.fillRect(x + w - 3, y, 3, markerSize);
+    // Bottom-left corner
+    ctx.fillRect(x, y + h - 3, markerSize, 3);
+    ctx.fillRect(x, y + h - markerSize, 3, markerSize);
+    // Bottom-right corner
+    ctx.fillRect(x + w - markerSize, y + h - 3, markerSize, 3);
+    ctx.fillRect(x + w - 3, y + h - markerSize, 3, markerSize);
 
     // Label background
-    ctx.font = 'bold 14px Arial';
+    ctx.font = 'bold 16px Arial';
     const textWidth = ctx.measureText(label).width;
-    const padding = 4;
+    const padding = 6;
+    const labelHeight = 24;
+
+    // Position label above box, or below if too close to top
+    const labelY = y > labelHeight + 10 ? y - labelHeight : y + h + labelHeight;
 
     ctx.fillStyle = color;
-    ctx.fillRect(x, y - 25, textWidth + padding * 2, 25);
+    ctx.fillRect(x, labelY - labelHeight + 4, textWidth + padding * 2, labelHeight);
     
     ctx.fillStyle = 'white';
-    ctx.fillText(label, x + padding, y - 8);
+    ctx.fillText(label, x + padding, labelY - 4);
   }
 }
 
@@ -414,9 +448,14 @@ function processModelOutput(output) {
   const classes = [];
   const confThreshold = Number(thresh.value);
   
+  // Scale coordinates from 640x640 model input to actual canvas size
   const scaleX = canvas.width / 640;
   const scaleY = canvas.height / 640;
+  
+  console.log(`Model output scaling: ${scaleX.toFixed(2)}x, ${scaleY.toFixed(2)}y (Canvas: ${canvas.width}x${canvas.height})`);
 
+  let detectionCount = 0;
+  
   for (const pred of predictions) {
     if (!pred || pred.length < 85) continue;
     
@@ -435,16 +474,30 @@ function processModelOutput(output) {
     const finalConfidence = objectness * maxScore;
     
     if (finalConfidence >= confThreshold) {
+      // Convert from center format to corner format and scale to canvas
       const x1 = (centerX - width / 2) * scaleX;
       const y1 = (centerY - height / 2) * scaleY;
       const x2 = (centerX + width / 2) * scaleX;
       const y2 = (centerY + height / 2) * scaleY;
       
-      boxes.push([y1, x1, y2, x2]);
+      // Clamp coordinates to canvas bounds
+      const clampedX1 = Math.max(0, Math.min(x1, canvas.width));
+      const clampedY1 = Math.max(0, Math.min(y1, canvas.height));
+      const clampedX2 = Math.max(clampedX1, Math.min(x2, canvas.width));
+      const clampedY2 = Math.max(clampedY1, Math.min(y2, canvas.height));
+      
+      console.log(`Detection ${detectionCount}: ${COCO_CLASSES[bestClass]} (${(finalConfidence*100).toFixed(1)}%)`);
+      console.log(`  Model coords: center=(${centerX.toFixed(1)}, ${centerY.toFixed(1)}), size=(${width.toFixed(1)}, ${height.toFixed(1)})`);
+      console.log(`  Canvas coords: (${clampedX1.toFixed(1)}, ${clampedY1.toFixed(1)}) to (${clampedX2.toFixed(1)}, ${clampedY2.toFixed(1)})`);
+      
+      boxes.push([clampedY1, clampedX1, clampedY2, clampedX2]);
       scores.push(finalConfidence);
       classes.push(bestClass);
+      detectionCount++;
     }
   }
+  
+  console.log(`Total detections above threshold: ${detectionCount}`);
   
   return { boxes, scores, classes };
 }
